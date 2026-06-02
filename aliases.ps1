@@ -59,37 +59,41 @@ function cat   { Get-Content @args }
 
 # head → first N lines (default 10)
 function head {
+    [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline=$true)] $InputObject,
         [int]$n = 10,
         [string]$Path
     )
-    if ($Path) {
-        Get-Content $Path | Select-Object -First $n
-    } elseif ($InputObject) {
-        $InputObject | Select-Object -First $n
+    begin   { $collected = [System.Collections.Generic.List[string]]::new() }
+    process { if ($InputObject -ne $null -and -not $Path) { $collected.Add([string]$InputObject) } }
+    end {
+        if ($Path) { Get-Content $Path | Select-Object -First $n }
+        else        { $collected | Select-Object -First $n }
     }
 }
 
 # tail → last N lines (default 10); -f for follow
 function tail {
+    [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline=$true)] $InputObject,
         [int]$n = 10,
         [switch]$f,
         [string]$Path
     )
-    if ($f -and $Path) {
-        Get-Content $Path -Wait -Tail $n
-    } elseif ($Path) {
-        Get-Content $Path | Select-Object -Last $n
-    } elseif ($InputObject) {
-        $InputObject | Select-Object -Last $n
+    begin   { $collected = [System.Collections.Generic.List[string]]::new() }
+    process { if ($InputObject -ne $null -and -not $Path) { $collected.Add([string]$InputObject) } }
+    end {
+        if ($f -and $Path)  { Get-Content $Path -Wait -Tail $n }
+        elseif ($Path)       { Get-Content $Path | Select-Object -Last $n }
+        else                 { $collected | Select-Object -Last $n }
     }
 }
 
 # grep → Select-String (basic passthrough with pattern + path support)
 function grep {
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true, Position=0)] [string]$Pattern,
         [Parameter(ValueFromPipeline=$true)]     $InputObject,
@@ -100,34 +104,45 @@ function grep {
         [switch]$n,   # show line numbers
         [switch]$v    # invert match
     )
-    $opts = @{ Pattern = $Pattern }
-    if ($i) { $opts['CaseSensitive'] = $false } else { $opts['CaseSensitive'] = $true }
-    if ($v) { $opts['NotMatch'] = $true }
-
-    if ($r -and $Path) {
-        Get-ChildItem -Recurse -File $Path | Select-String @opts |
-            ForEach-Object {
-                if ($l) { $_.Filename }
-                elseif ($n) { "$($_.Filename):$($_.LineNumber): $($_.Line)" }
-                else { "$($_.Filename): $($_.Line)" }
-            }
-    } elseif ($Path) {
-        Select-String @opts -Path $Path |
-            ForEach-Object {
-                if ($l) { $_.Filename }
-                elseif ($n) { "$($_.Filename):$($_.LineNumber): $($_.Line)" }
-                else { $_.Line }
-            }
-    } elseif ($InputObject) {
-        $InputObject | Select-String @opts |
-            ForEach-Object {
-                if ($n) { "$($_.LineNumber): $($_.Line)" } else { $_.Line }
-            }
+    begin {
+        $opts = @{ Pattern = $Pattern }
+        if ($i) { $opts['CaseSensitive'] = $false } else { $opts['CaseSensitive'] = $true }
+        if ($v) { $opts['NotMatch'] = $true }
+        $lines = [System.Collections.Generic.List[string]]::new()
+    }
+    process {
+        # Collect piped input line by line
+        if ($InputObject -ne $null -and -not $Path -and -not $r) {
+            $lines.Add([string]$InputObject)
+        }
+    }
+    end {
+        if ($r -and $Path) {
+            Get-ChildItem -Recurse -File $Path | Select-String @opts |
+                ForEach-Object {
+                    if ($l) { $_.Filename }
+                    elseif ($n) { "$($_.Filename):$($_.LineNumber): $($_.Line)" }
+                    else { "$($_.Filename): $($_.Line)" }
+                }
+        } elseif ($Path) {
+            Select-String @opts -Path $Path |
+                ForEach-Object {
+                    if ($l) { $_.Filename }
+                    elseif ($n) { "$($_.Filename):$($_.LineNumber): $($_.Line)" }
+                    else { $_.Line }
+                }
+        } elseif ($lines.Count -gt 0) {
+            $lines | Select-String @opts |
+                ForEach-Object {
+                    if ($n) { "$($_.LineNumber): $($_.Line)" } else { $_.Line }
+                }
+        }
     }
 }
 
 # wc → measure lines/words/chars
 function wc {
+    [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline=$true)] $InputObject,
         [switch]$l,  # lines
@@ -135,91 +150,119 @@ function wc {
         [switch]$c,  # characters
         [string]$Path
     )
-    $content = if ($Path) { Get-Content $Path } else { $InputObject }
-    $text = $content -join "`n"
-    if ($l)     { ($text -split "`n").Count }
-    elseif ($w) { ($text -split '\s+' | Where-Object { $_ -ne '' }).Count }
-    elseif ($c) { $text.Length }
-    else {
-        $lines = ($text -split "`n").Count
-        $words = ($text -split '\s+' | Where-Object { $_ -ne '' }).Count
-        $chars = $text.Length
-        "$lines`t$words`t$chars"
+    begin   { $collected = [System.Collections.Generic.List[string]]::new() }
+    process { if ($InputObject -ne $null -and -not $Path) { $collected.Add([string]$InputObject) } }
+    end {
+        $content = if ($Path) { Get-Content $Path } else { $collected }
+        $text = $content -join "`n"
+        if ($l)     { ($text -split "`n").Count }
+        elseif ($w) { ($text -split '\s+' | Where-Object { $_ -ne '' }).Count }
+        elseif ($c) { $text.Length }
+        else {
+            $lines = ($text -split "`n").Count
+            $words = ($text -split '\s+' | Where-Object { $_ -ne '' }).Count
+            $chars = $text.Length
+            "$lines`t$words`t$chars"
+        }
     }
 }
 
 # sort → Sort-Object (passthrough)
 function sort-u {
+    [CmdletBinding()]
     param([Parameter(ValueFromPipeline=$true)] $InputObject)
-    $input | Sort-Object -Unique
+    begin   { $collected = [System.Collections.Generic.List[string]]::new() }
+    process { if ($InputObject -ne $null) { $collected.Add([string]$InputObject) } }
+    end     { $collected | Sort-Object -Unique }
 }
 
 # uniq → Get unique lines
 function uniq {
+    [CmdletBinding()]
     param([Parameter(ValueFromPipeline=$true)] $InputObject)
-    $input | Get-Unique
+    begin   { $collected = [System.Collections.Generic.List[string]]::new() }
+    process { if ($InputObject -ne $null) { $collected.Add([string]$InputObject) } }
+    end     { $collected | Get-Unique }
 }
 
 # cut → select columns (delimiter-based)
 function cut {
+    [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline=$true)] $InputObject,
         [string]$d = "`t",   # delimiter
         [string]$f = "1"     # field number(s), e.g. "1" or "1,3"
     )
-    $fields = $f -split ',' | ForEach-Object { [int]$_ - 1 }
-    $input | ForEach-Object {
-        $parts = $_ -split [regex]::Escape($d)
-        ($fields | ForEach-Object { $parts[$_] }) -join $d
+    begin   { $fields = $f -split ',' | ForEach-Object { [int]$_ - 1 } }
+    process {
+        if ($InputObject -ne $null) {
+            $parts = ([string]$InputObject) -split [regex]::Escape($d)
+            ($fields | ForEach-Object { $parts[$_] }) -join $d
+        }
     }
 }
 
 # tr → translate/replace characters
 function tr {
+    [CmdletBinding()]
     param(
         [Parameter(ValueFromPipeline=$true)] $InputObject,
         [string]$From,
         [string]$To
     )
-    $input | ForEach-Object {
-        $line = $_
-        for ($i = 0; $i -lt [Math]::Min($From.Length, $To.Length); $i++) {
-            $line = $line -replace [regex]::Escape($From[$i].ToString()), $To[$i].ToString()
+    process {
+        if ($InputObject -ne $null) {
+            $line = [string]$InputObject
+            for ($i = 0; $i -lt [Math]::Min($From.Length, $To.Length); $i++) {
+                $line = $line -replace [regex]::Escape($From[$i].ToString()), $To[$i].ToString()
+            }
+            $line
         }
-        $line
     }
 }
 
 # sed (basic s/pattern/replacement/g)
 function sed {
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true, Position=0)] [string]$Expression,
         [Parameter(ValueFromPipeline=$true)]     $InputObject
     )
-    if ($Expression -match '^s/(.+)/(.*)/(g?)$') {
-        $pat  = $Matches[1]
-        $repl = $Matches[2]
-        $glob = $Matches[3] -eq 'g'
-        $input | ForEach-Object {
-            if ($glob) { $_ -replace $pat, $repl }
-            else       { $_ -replace "(?<first>$pat)", $repl }
+    begin {
+        if ($Expression -match '^s/(.+)/(.*)/(g?)$') {
+            $pat  = $Matches[1]
+            $repl = $Matches[2]
+            $glob = $Matches[3] -eq 'g'
+        } else {
+            Write-Warning "sed: only basic s/pattern/replacement/[g] syntax supported"
         }
-    } else {
-        Write-Warning "sed: only basic s/pattern/replacement/[g] syntax supported"
+    }
+    process {
+        if ($InputObject -ne $null -and $pat) {
+            if ($glob) { ([string]$InputObject) -replace $pat, $repl }
+            else       { ([string]$InputObject) -replace $pat, $repl }
+        }
     }
 }
 
 # awk (very basic — print specific field)
 function awk {
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory=$true, Position=0)] [string]$Program,
         [Parameter(ValueFromPipeline=$true)]     $InputObject
     )
-    if ($Program -match "print\s+\\\$(\d+)") {
-        $field = [int]$Matches[1] - 1
-        $input | ForEach-Object { ($_ -split '\s+')[$field] }
-    } else {
-        Write-Warning "awk: only basic '{print `$N}' syntax supported. Use pwsh natively for complex awk."
+    begin {
+        if ($Program -match "print\s+\\\$(\d+)") {
+            $field = [int]$Matches[1] - 1
+        } else {
+            Write-Warning "awk: only basic '{print `$N}' syntax supported. Use pwsh natively for complex awk."
+        }
+    }
+    process {
+        if ($InputObject -ne $null -and $field -ne $null) {
+            (([string]$InputObject) -split '\s+')[$field]
+        }
     }
 }
 
