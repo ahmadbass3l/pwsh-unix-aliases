@@ -18,6 +18,12 @@ cd pwsh-unix-aliases
 
 That's it. Open a new PowerShell 7 session (or say **Y** when prompted to reload) and your Unix commands are available.
 
+> **If aliases aren't active after install**, the auto-reload may not have taken effect in your current session. Just run:
+> ```powershell
+> . $PROFILE
+> ```
+> This dot-sources your profile manually and activates all aliases immediately — no need to open a new window.
+
 ---
 
 ## What `install.ps1` does
